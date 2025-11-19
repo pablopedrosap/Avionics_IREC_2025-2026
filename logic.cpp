@@ -13,7 +13,7 @@ inline bool vote2of3(bool a, bool b, bool c) { return (a + b + c) >= 2; }
 
 // Advika writes these:
 
-##
+####
 bool liftoff_ok(const Sample& s) { return false; }
 bool burnout_ok(const Sample& s) { return false; }
 bool sep_time_ok(uint32_t now_ms, uint32_t t_burnout) { return false; }
