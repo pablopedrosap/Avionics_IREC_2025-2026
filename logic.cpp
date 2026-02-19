@@ -1,20 +1,4 @@
-#pragma once
-#include <Arduino.h>
-
-// Units: t_ms= time in ms, alt= altitude in m, v_alt= vertical velocity in m/s, a_mag= acceleration inm/s^2
-struct Sample { uint32_t t_ms; float alt, v_alt, a_mag; };
-enum State { SAFE, ARMED, ASCENT, COAST, S2_ARMED, APOGEE, DROGUE, MAIN, RECOVERY };
-
-// Stage-specific constraints
-struct StageConstraints {
-  float liftoff_accel;      // m/s^2
-  float burnout_accel;       // m/s^2
-  float sep_alt_min;         // m
-  float sep_alt_max;         // m
-  float apogee_v_threshold;  // m/s
-  float main_alt;            // m
-  float main_v_descend;      // m/s
-};
+#include "logic.h"
 
 const StageConstraints S1 = {
   .liftoff_accel = 15.0f,      // ~1.5g (S1 max: 16.2g from OpenRocket)
@@ -34,14 +18,9 @@ const StageConstraints S2 = {
   .main_v_descend = -5.0f      // m/s 
 };
 
-// Get current stage (1 or 2) based on state
-int getStage(State st) {
-  return (st >= S2_ARMED) ? 2 : 1;
-}
-
 Sample readSensors() { return {millis(), 0, 0, 0}; }
 bool sepConfirm() { return false; }
-bool interlocksOK() { return true; }
+//bool interlocksOK() { return true; }
 void pyroFire(int ch, uint32_t ms) {}
 void setEnableS2(bool en) {}
 
@@ -51,12 +30,14 @@ void setEnableS2(bool en) {}
     S2 apogee 12368ft (3774m), velocity max 865ft/s (264m/s), acceleration max 12.1g (119m/s^2). */
 
 // Liftoff: accel > threshold (stage-aware)
+// ARMED
 bool liftoff_ok(const Sample& s, int stage) {
   const StageConstraints& c = (stage == 1) ? S1 : S2;
   return s.a_mag > c.liftoff_accel;
 }
 
 // Burnout: accel < threshold (stage-aware)
+// ASCENT
 bool burnout_ok(const Sample& s, int stage) {
   const StageConstraints& c = (stage == 1) ? S1 : S2;
   return s.a_mag < c.burnout_accel;
@@ -66,10 +47,11 @@ bool burnout_ok(const Sample& s, int stage) {
 bool sep_time_ok(uint32_t now_ms, uint32_t t_burnout) {
   if (t_burnout == 0) return false;  // No burnout time recorded yet
   uint32_t elapsed = now_ms - t_burnout;
-  return elapsed >= 500 && elapsed <= 3000;  // 0.5-3 seconds window (units: milliseconds)
+  return elapsed >= 3000 && elapsed <= 5000;  // 3-5 seconds window (units: milliseconds)
 }
 
 // Separation altitude gate (stage-aware, only used for S1)
+// COAST
 bool sep_alt_ok(const Sample& s, int stage) {
   const StageConstraints& c = (stage == 1) ? S1 : S2;
   return s.alt > c.sep_alt_min && s.alt < c.sep_alt_max;
@@ -78,12 +60,14 @@ bool sep_alt_ok(const Sample& s, int stage) {
 bool sep_confirm_ok(bool sepC) { return sepC; }
 
 // Apogee: velocity trending to <= ~0 (stage-aware)
+// GOING FROM COAST TO APOGEE
 bool apogee_ok(const float* v_hist, int n, int stage) {
   if (n < 3) return false;
   
   const StageConstraints& c = (stage == 1) ? S1 : S2;
   int lookback = (n < 10) ? n : 10;
   
+  // Check if the velocity has been positive for the last 10 samples
   bool had_positive = false;
   for (int i = n - lookback; i < n - 1; i++) {
     if (v_hist[i] > c.apogee_v_threshold) {
@@ -95,8 +79,9 @@ bool apogee_ok(const float* v_hist, int n, int stage) {
   float current_v = v_hist[n - 1];
   return had_positive && current_v <= c.apogee_v_threshold;
 }
-
+// GOING FROM APOGEE TO DROGUE
 // Main: below threshold and descending (stage-aware)
+// GOING FROM DROGUE TO MAIN
 bool main_ok(const Sample& s, int stage) {
   const StageConstraints& c = (stage == 1) ? S1 : S2;
   return s.alt < c.main_alt && s.v_alt < c.main_v_descend;
